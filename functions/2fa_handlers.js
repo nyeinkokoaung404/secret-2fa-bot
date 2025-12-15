@@ -5,62 +5,33 @@
 ///////////////////////////////////////////////
 
 import {
+    get_text,
+    sendMessage,
+    editMessageText,
+    isCommandMessage,
+} from './utils.js';
+
+import {
+    get_user_language,
+    isUserBanned,
+} from './db.js';
+
+import { 
     TELEGRAM_BOT_TOKEN_ENV,
-    MAX_SECRET_LENGTH,
-    WELCOME_MESSAGE,
+    BAN_REPLY,
 } from './config.js';
 
-// --- Utility Functions (Simplified for standalone use) ---
-
-const API_ENDPOINT = 'https://api.telegram.org/bot';
+// --- Constants ---
 const PARSE_MODE = 'Markdown';
-//const token = env[TELEGRAM_BOT_TOKEN_ENV];
+const SECRET_REGEX = /^[A-Z2-7\s]+$/i;
 
-/**
- * Sends a message via the Telegram Bot API.
- */
-async function sendMessage(chat_id, text, reply_markup, disable_web_page_preview, token, parse_mode = PARSE_MODE) {
-    const url = `${API_ENDPOINT}${token}/sendMessage`;
-    const body = {
-        chat_id: chat_id,
-        text: text,
-        parse_mode: parse_mode,
-        disable_web_page_preview: disable_web_page_preview,
-        reply_markup: reply_markup,
-    };
-
-    return fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-    }).catch(e => console.error("Send Message Error:", e));
-}
-
-/**
- * Edits an existing message via the Telegram Bot API.
- */
-async function editMessageText(chat_id, message_id, text, reply_markup, disable_web_page_preview, token, parse_mode = PARSE_MODE) {
-    const url = `${API_ENDPOINT}${token}/editMessageText`;
-    const body = {
-        chat_id: chat_id,
-        message_id: message_id,
-        text: text,
-        parse_mode: parse_mode,
-        disable_web_page_preview: disable_web_page_preview,
-        reply_markup: reply_markup,
-    };
-
-    return fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-    }).catch(e => console.error("Edit Message Error:", e));
-}
-
-// --- TOTP Core Logic ---
+// --- Keep existing base32Decode and generateTOTP functions ---
 
 /**
  * Decodes a Base32 string (RFC 4648) to a raw binary ArrayBuffer key.
+ * This mimics PHP's base32Decode logic closely.
+ * @param {string} secret - Base32 secret string.
+ * @returns {ArrayBuffer | null} Raw binary key or null if invalid.
  */
 function base32Decode(secret) {
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -88,18 +59,21 @@ function base32Decode(secret) {
 
 /**
  * Generates TOTP code using HMAC-SHA1 and Dynamic Truncation.
+ * @param {string} secret - Base32 secret string.
+ * @returns {Promise<string | null>} 6-digit TOTP code or null on error.
  */
 async function generateTOTP(secret) {
     const keyBuffer = base32Decode(secret);
-    if (!keyBuffer || keyBuffer.byteLength === 0) return null;
+    if (!keyBuffer) return null;
     
     const epochSeconds = Math.floor(Date.now() / 1000);
     const timeStep = Math.floor(epochSeconds / 30);
     
     const msgBuffer = new ArrayBuffer(8);
     const dataView = new DataView(msgBuffer);
-    dataView.setUint32(0, 0, false);
-    dataView.setUint32(4, timeStep, false);
+    
+    dataView.setUint32(0, 0, false); 
+    dataView.setUint32(4, timeStep, false); 
 
     const cryptoKey = await crypto.subtle.importKey(
         'raw', 
@@ -122,59 +96,126 @@ async function generateTOTP(secret) {
     return String(code).padStart(6, "0");
 }
 
+// --- New: Direct Secret Message Handler ---
+
+/**
+ * Handles direct secret messages (not commands)
+ */
+export async function handleSecretMessage(chatId, userId, message, env) {
+    const token = env[TELEGRAM_BOT_TOKEN_ENV];
+    const lang = await get_user_language(chatId, env);
+    
+    // 1. Ban Check
+    if (await isUserBanned(userId, env)) {
+        await sendMessage(chatId, BAN_REPLY, null, true, token, PARSE_MODE);
+        return;
+    }
+
+    const rawText = message.text?.trim();
+    
+    // Skip if it's a command or empty message
+    if (!rawText || isCommandMessage(message)) {
+        return;
+    }
+
+    // Clean and validate the secret
+    const clean_secret = rawText.toUpperCase().replace(/\s/g, '').replace(/[^A-Z2-7]/g, '');
+    
+    // Check if it looks like a valid Base32 secret
+    if (clean_secret.length < 16 || !SECRET_REGEX.test(rawText)) {
+        // Not a valid secret, ignore the message
+        return;
+    }
+
+    const loading_message = await sendMessage(chatId, "*🔐 Generating TOTP code...*", null, true, token, PARSE_MODE);
+    const loading_message_id = loading_message?.data?.result?.message_id;
+
+    try {
+        const totp_code = await generateTOTP(clean_secret);
+
+        if (!totp_code) {
+            throw new Error("TOTP generation failed internally.");
+        }
+
+        const epochSeconds = Math.floor(Date.now() / 1000);
+        const seconds_passed = epochSeconds % 30;
+        const seconds_remaining = 30 - seconds_passed;
+        
+        // User info
+        const from_user = message.from;
+        const user_name = `${from_user.first_name || ''} ${from_user.last_name || ''}`.trim() || from_user.username || `User ${from_user.id}`;
+        const user_link = `[${user_name}](tg://user?id=${from_user.id})`;
+
+        // Successful Response
+        const response_text = 
+            `**🔐 TOTP Code Generated ✅**\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `*Code:* \`${totp_code}\`\n` +
+            `*Expires in:* \`${seconds_remaining}\` seconds\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `*Secret:* \`${clean_secret.substring(0, 8)}...${clean_secret.slice(-4)}\`\n\n` +
+            `*Generated By:* ${user_link}\n` +
+            `*Via:* Direct Secret Message`;
+
+        await editMessageText(chatId, loading_message_id, response_text, null, true, token, PARSE_MODE);
+
+    } catch (e) {
+        console.error(`Direct Secret Handler Error: ${e.message}`);
+        const error_message = get_text('2fa_error', lang) || `*❌ Error generating code: ${e.message.substring(0, 50)}*`;
+        await editMessageText(chatId, loading_message_id, error_message, null, true, token, PARSE_MODE);
+    }
+}
+
+// --- Updated Main Handler Logic ---
+
 /**
  * Creates the user information string for the final message caption.
+ * @param {Object} message - The message object.
+ * @returns {string} Markdown formatted user link.
  */
 function create_user_link(message) {
     const from_user = message.from;
     
     if (from_user) {
         const name = `${from_user.first_name || ''} ${from_user.last_name || ''}`.trim() || from_user.username || `User ${from_user.id}`;
+        // Markdown user link format: [name](tg://user?id=id)
         return `[${name}](tg://user?id=${from_user.id})`;
     } else {
-        return "Unknown User";
+        const group = message.chat.title || "this group";
+        const url = message.chat.username ? `https://t.me/${message.chat.username}` : "";
+        return url ? `[${group}](${url})` : group;
     }
 }
 
-// --- Main Update Handler ---
-
 /**
- * Handles all incoming Telegram updates.
+ * Handles the /2fa command for TOTP code generation.
  */
-export async function handleUpdate(update, env) {
+export async function handle2FACommand(chatId, userId, message, commandBase, paramString, env) {
     const token = env[TELEGRAM_BOT_TOKEN_ENV];
-
-    if (!update.message) {
+    const lang = await get_user_language(chatId, env);
+    
+    // 1. Ban Check
+    if (await isUserBanned(userId, env)) {
+        await sendMessage(chatId, BAN_REPLY, null, true, token, PARSE_MODE);
         return;
     }
 
-    const message = update.message;
-    const chatId = message.chat.id;
-    const raw_text = message.text;
+    const raw_secret = paramString?.trim();
 
-    if (!raw_text) {
+    if (!raw_secret) {
+        const error_message = get_text('2fa_secret_missing', lang) || "*❌ Secret not provided. Please include the Base32 secret.*";
+        await sendMessage(chatId, error_message, null, true, token, PARSE_MODE);
         return;
     }
     
-    const raw_secret = raw_text.trim();
-
-    // --- 1. Handle /start command ---
-    if (raw_secret.toLowerCase() === '/start') {
-        await sendMessage(chatId, WELCOME_MESSAGE, null, true, token, PARSE_MODE);
-        return;
-    }
-
-    // --- 2. Clean and Validate Secret ---
     const clean_secret = raw_secret.toUpperCase().replace(/\s/g, '').replace(/[^A-Z2-7]/g, '');
 
-    if (!clean_secret || clean_secret.length < 8 || clean_secret.length > MAX_SECRET_LENGTH) {
-        // Ignore messages that don't look like a secret.
-        // We only proceed if it might be a Base32 string.
+    if (!clean_secret) {
+        const error_message = get_text('2fa_invalid_secret', lang) || "*❌ Invalid Secret. Please provide a valid Base32 secret string.*";
+        await sendMessage(chatId, error_message, null, true, token, PARSE_MODE);
         return;
     }
-    
-    // --- 3. Processing Flow ---
-    
+
     const loading_message = await sendMessage(chatId, "*Generating TOTP code...*", null, true, token, PARSE_MODE);
     const loading_message_id = loading_message?.data?.result?.message_id;
 
@@ -182,16 +223,17 @@ export async function handleUpdate(update, env) {
         const totp_code = await generateTOTP(clean_secret);
 
         if (!totp_code) {
-             throw new Error("Invalid Base32 Secret or TOTP generation failed.");
+             throw new Error("TOTP generation failed internally.");
         }
 
         const epochSeconds = Math.floor(Date.now() / 1000);
         const seconds_passed = epochSeconds % 30;
         const seconds_remaining = 30 - seconds_passed;
         
+        // User link
         const user_link = create_user_link(message);
 
-        // Success Response
+        // Successful Response
         const response_text = 
             `**🔐 TOTP Code Generated ✅**\n` +
             `━━━━━━━━━━━━━━━━━━\n` +
@@ -205,7 +247,7 @@ export async function handleUpdate(update, env) {
 
     } catch (e) {
         console.error(`TOTP Handler Error: ${e.message}`);
-        const error_message = `*❌ Error generating code. Please check your secret key.*`;
+        const error_message = get_text('2fa_error', lang) || `*❌ Error generating code: ${e.message.substring(0, 50)}*`;
         await editMessageText(chatId, loading_message_id, error_message, null, true, token, PARSE_MODE);
     }
 }
