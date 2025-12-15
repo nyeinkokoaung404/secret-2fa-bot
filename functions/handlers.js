@@ -3,15 +3,8 @@
 // Channel: https://t.me/premium_channel_404
 ///////////////////////////////////////////////
 
-import {
-    get_text,
-    sendMessage
-} from './utils.js';
-
-import { 
-    TELEGRAM_BOT_TOKEN_ENV,
-    PARSE_MODE,
-} from './config.js';
+import { sendMessage } from './utils.js';
+import { TELEGRAM_BOT_TOKEN_ENV, PARSE_MODE } from './config.js';
 
 // --- Core 2FA Functions ---
 
