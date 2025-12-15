@@ -11,8 +11,6 @@ import {
     get_text,
 } from './config.js';
 
-// --- Utility Functions (Simplified for standalone use) ---
-
 const API_ENDPOINT = 'https://api.telegram.org/bot';
 const PARSE_MODE = 'Markdown';
 
