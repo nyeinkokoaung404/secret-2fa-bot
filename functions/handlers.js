@@ -1,4 +1,3 @@
-// handlers.js
 ///////////////////////////////////////////////
 // Copyright (C) t.me/nkka404
 // Channel: https://t.me/premium_channel_404
@@ -6,8 +5,7 @@
 
 import {
     get_text,
-    sendMessage,
-    editMessageText, // ဤ function ကို အသုံးပြုတော့မည်မဟုတ်သော်လည်း import လုပ်ထားသည်။
+    sendMessage
 } from './utils.js';
 
 import { 
@@ -85,12 +83,11 @@ async function generateTOTP(secret) {
         // Truncation and Modulo 10^6
         const truncatedHashView = new DataView(hashBuffer, offset, 4);
         let binary = truncatedHashView.getUint32(0, false); 
-        binary = binary & 0x7FFFFFFF; // Clear the most significant bit
+        binary = binary & 0x7FFFFFFF;
 
         const code = binary % 1000000;
         return String(code).padStart(6, "0");
     } catch (e) {
-        // Cryptographic errors (e.g., "Key is too short") ကို ဖမ်းယူပြီး ပြန်လည် ထုတ်ပစ်သည်။
         console.error("Crypto Subtle Error:", e.message);
         throw new Error(`Crypto operation failed: ${e.message}`);
     }
@@ -168,7 +165,7 @@ export async function handleUpdate(update, env) {
 
                     // 3. Successful Response
                     final_response_text = 
-                        `**🔐 TOTP Code Generated ✅**\n` +
+                        `*🔐 TOTP Code Generated ✅*\n` +
                         `━━━━━━━━━━━━━━━━━━\n` +
                         `*Code:* \`${totp_code}\`\n` +
                         `*Expires in:* \`${seconds_remaining}\` seconds\n` +
