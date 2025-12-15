@@ -94,13 +94,30 @@ async function generateTOTP(secret) {
 
 /**
  * Creates the user information string for the final message caption.
+ * Now properly includes First Name and Last Name together.
  */
 function create_user_link(message) {
     const from_user = message.from;
     
     if (from_user) {
-        const name = `${from_user.first_name || ''} ${from_user.last_name || ''}`.trim() || from_user.username || `User ${from_user.id}`;
-        return `[${name}](tg://user?id=${from_user.id})`;
+        // Combine first name and last name properly
+        let full_name = '';
+        
+        if (from_user.first_name) {
+            full_name += from_user.first_name;
+        }
+        
+        if (from_user.last_name) {
+            if (full_name) full_name += ' '; // Add space between names
+            full_name += from_user.last_name;
+        }
+        
+        // If no name at all, use username or ID
+        if (!full_name.trim()) {
+            full_name = from_user.username || `User ${from_user.id}`;
+        }
+        
+        return `[${full_name}](tg://user?id=${from_user.id})`;
     } else {
         return "Unknown User";
     }
@@ -361,16 +378,16 @@ async function handleSecret(rawSecret, chatId, message, token, isRefresh = false
     const epochSeconds = Math.floor(Date.now() / 1000);
     const secondsRemaining = 30 - (epochSeconds % 30);
     
-    // Create response
+    // Create response with proper user link
     const userLink = create_user_link(message);
     const maskedSecret = maskSecret(validation.cleaned, 4, 4);
     
     const response = 
         `*✅ TOTP Code Generated Successfully*\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
         `*🔢 Code:* \`${totpCode}\`\n` +
         `*⏱️ Expires in:* \`${secondsRemaining}\` seconds\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
         `*🔐 Secret:* \`${maskedSecret}\`\n` +
         `*👤 Generated for:* ${userLink}\n\n` +
         `_⚠️ Code refreshes automatically every 30 seconds_\n` +
@@ -444,14 +461,32 @@ async function handleCallbackQuery(callbackQuery, token) {
             const totpCode = await generateTOTP(secret);
             const epochSeconds = Math.floor(Date.now() / 1000);
             const secondsRemaining = 30 - (epochSeconds % 30);
-            const userLink = `[${callbackQuery.from.first_name || 'User'}](tg://user?id=${userId})`;
+            
+            // Create user link with proper name format for callback query
+            const from_user = callbackQuery.from;
+            let full_name = '';
+            
+            if (from_user.first_name) {
+                full_name += from_user.first_name;
+            }
+            
+            if (from_user.last_name) {
+                if (full_name) full_name += ' ';
+                full_name += from_user.last_name;
+            }
+            
+            if (!full_name.trim()) {
+                full_name = from_user.username || `User ${userId}`;
+            }
+            
+            const userLink = `[${full_name}](tg://user?id=${userId})`;
             
             const response = 
                 `*🔓 Full Secret Display*\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `━━━━━━━━━━━━━━━━━━━━\n` +
                 `*🔢 Code:* \`${totpCode}\`\n` +
                 `*⏱️ Expires in:* \`${secondsRemaining}\` seconds\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `━━━━━━━━━━━━━━━━━━━━\n` +
                 `*🔐 Full Secret:* \`${secret}\`\n` +
                 `*👤 Generated for:* ${userLink}\n\n` +
                 `_⚠️ Keep this secret secure! Do not share._\n` +
@@ -480,15 +515,33 @@ async function handleCallbackQuery(callbackQuery, token) {
             const totpCode = await generateTOTP(secret);
             const epochSeconds = Math.floor(Date.now() / 1000);
             const secondsRemaining = 30 - (epochSeconds % 30);
-            const userLink = `[${callbackQuery.from.first_name || 'User'}](tg://user?id=${userId})`;
+            
+            // Create user link with proper name format for callback query
+            const from_user = callbackQuery.from;
+            let full_name = '';
+            
+            if (from_user.first_name) {
+                full_name += from_user.first_name;
+            }
+            
+            if (from_user.last_name) {
+                if (full_name) full_name += ' ';
+                full_name += from_user.last_name;
+            }
+            
+            if (!full_name.trim()) {
+                full_name = from_user.username || `User ${userId}`;
+            }
+            
+            const userLink = `[${full_name}](tg://user?id=${userId})`;
             const maskedSecret = maskSecret(secret, 4, 4);
             
             const response = 
                 `*✅ TOTP Code Generated Successfully*\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `━━━━━━━━━━━━━━━━━━━━\n` +
                 `*🔢 Code:* \`${totpCode}\`\n` +
                 `*⏱️ Expires in:* \`${secondsRemaining}\` seconds\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `━━━━━━━━━━━━━━━━━━━━\n` +
                 `*🔐 Secret:* \`${maskedSecret}\`\n` +
                 `*👤 Generated for:* ${userLink}\n\n` +
                 `_⚠️ Code refreshes automatically every 30 seconds_\n` +
@@ -591,4 +644,4 @@ export async function handleUpdate(update, env) {
             null, true, token, PARSE_MODE
         );
     }
-        }
+}
