@@ -14,7 +14,7 @@ import {
 
 const API_ENDPOINT = 'https://api.telegram.org/bot';
 const PARSE_MODE = 'Markdown';
-const token = env[TELEGRAM_BOT_TOKEN_ENV];
+//const token = env[TELEGRAM_BOT_TOKEN_ENV];
 
 /**
  * Sends a message via the Telegram Bot API.
