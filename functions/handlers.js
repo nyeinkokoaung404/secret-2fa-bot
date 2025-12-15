@@ -49,7 +49,8 @@ function base32Decode(secret) {
 
 /**
  * Generates TOTP code using HMAC-SHA1 and Dynamic Truncation (RFC 6238).
- * @param {string} secret - Base32 secret string.
+ * * ⚠️ ဤနေရာ၌ try...catch ကို ထည့်သွင်းခြင်းဖြင့် crypto.subtle errors များကို ဖမ်းယူသည်။
+ * * @param {string} secret - Base32 secret string.
  * @returns {Promise<string | null>} 6-digit TOTP code or null on error.
  */
 async function generateTOTP(secret) {
@@ -68,29 +69,36 @@ async function generateTOTP(secret) {
     dataView.setUint32(0, 0, false); 
     dataView.setUint32(4, timeStep, false); 
 
-    // HMAC-SHA1 Key Import
-    const cryptoKey = await crypto.subtle.importKey(
-        'raw', 
-        keyBuffer, 
-        { name: 'HMAC', hash: 'SHA-1' }, 
-        false, 
-        ['sign']
-    );
-    
-    // HMAC-SHA1 Calculation
-    const hashBuffer = await crypto.subtle.sign('HMAC', cryptoKey, msgBuffer);
-    const hashView = new Uint8Array(hashBuffer);
+    try {
+        // HMAC-SHA1 Key Import
+        const cryptoKey = await crypto.subtle.importKey(
+            'raw', 
+            keyBuffer, 
+            { name: 'HMAC', hash: 'SHA-1' }, 
+            false, 
+            ['sign']
+        );
+        
+        // HMAC-SHA1 Calculation
+        const hashBuffer = await crypto.subtle.sign('HMAC', cryptoKey, msgBuffer);
+        const hashView = new Uint8Array(hashBuffer);
 
-    // Dynamic Truncation Offset
-    const offset = hashView[hashView.length - 1] & 0x0F;
+        // Dynamic Truncation Offset
+        const offset = hashView[hashView.length - 1] & 0x0F;
 
-    // Truncation and Modulo 10^6
-    const truncatedHashView = new DataView(hashBuffer, offset, 4);
-    let binary = truncatedHashView.getUint32(0, false); 
-    binary = binary & 0x7FFFFFFF; // Clear the most significant bit
+        // Truncation and Modulo 10^6
+        const truncatedHashView = new DataView(hashBuffer, offset, 4);
+        let binary = truncatedHashView.getUint32(0, false); 
+        binary = binary & 0x7FFFFFFF; // Clear the most significant bit
 
-    const code = binary % 1000000;
-    return String(code).padStart(6, "0");
+        const code = binary % 1000000;
+        return String(code).padStart(6, "0");
+    } catch (e) {
+        // Cryptographic errors (e.g., "Key is too short") ကို ဤနေရာမှ ဖမ်းယူသည်။
+        console.error("Crypto Subtle Error:", e.message);
+        // Error message ကို main handler သို့ ပို့နိုင်ရန် ဤနေရာတွင် throw ပြန်လုပ်မည်။
+        throw new Error(`Crypto operation failed: ${e.message}`);
+    }
 }
 
 /**
@@ -111,11 +119,10 @@ function create_user_link(message) {
 
 /**
  * Telegram Update Object ကို ခွဲခြမ်းစိတ်ဖြာပြီး TOTP Code ကို ထုတ်လုပ်သည်။
- * ဤ function အတွင်းမှ crypto.subtle.x() ကဲ့သို့သော Promise များသည် main request flow တွင် ပြီးစီးမည်။
  */
 export async function handleUpdate(update, env) {
     const token = env[TELEGRAM_BOT_TOKEN_ENV];
-    const lang = LANGUAGE_PACK.default; // db.js မရှိ၍ hardcode
+    const lang = LANGUAGE_PACK.default; // hardcode
 
     if (!token) {
         console.error("TELEGRAM_BOT_TOKEN_ENV is not set in environment.");
@@ -158,11 +165,12 @@ export async function handleUpdate(update, env) {
         const loading_message_id = loading_message_response?.data?.result?.message_id;
 
         try {
-            // 3. TOTP Generation (Cryptographic logic ကို await ဖြင့် လုပ်ဆောင်သည်)
+            // 3. TOTP Generation
             const totp_code = await generateTOTP(clean_secret);
 
             if (!totp_code) {
-                 throw new Error("Invalid Base32 Secret Key or internal error during HMAC generation.");
+                 // generateTOTP သည် Base32 Decode မအောင်မြင်ပါက null ပြန်လာနိုင်သည်။
+                 throw new Error("Base32 decoding failed. Check secret format.");
             }
 
             // Time Remaining Calculation
@@ -173,7 +181,7 @@ export async function handleUpdate(update, env) {
 
             // 4. Successful Response
             const response_text = 
-                `*🔐 TOTP Code Generated ✅*\n` +
+                `**🔐 TOTP Code Generated ✅**\n` +
                 `━━━━━━━━━━━━━━━━━━\n` +
                 `*Code:* \`${totp_code}\`\n` +
                 `*Expires in:* \`${seconds_remaining}\` seconds\n` +
@@ -185,9 +193,12 @@ export async function handleUpdate(update, env) {
             await editMessageText(chatId, loading_message_id, response_text, null, true, token, PARSE_MODE);
 
         } catch (e) {
-            console.error(`TOTP Handler Error: ${e.message}`);
+            console.error(`TOTP Handler Fatal Error: ${e.message}`);
+            
             // Error message ကို Loading message နေရာတွင် ပြန်လည်ပြင်ဆင်သည်။
-            const error_message = get_text('2fa_error', lang) || `*❌ Error generating code: ${e.message.substring(0, 50)}*`;
+            const display_error = `*❌ Error: ${e.message.substring(0, 100)}*`;
+            const error_message = get_text('2fa_error', lang) || display_error;
+            
             await editMessageText(chatId, loading_message_id, error_message, null, true, token, PARSE_MODE);
         }
 
