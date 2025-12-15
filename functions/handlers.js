@@ -11,7 +11,6 @@ import {
 import { 
     TELEGRAM_BOT_TOKEN_ENV,
     PARSE_MODE,
-    LANGUAGE_PACK,
 } from './config.js';
 
 // --- Core 2FA Functions ---
@@ -107,90 +106,489 @@ function create_user_link(message) {
     }
 }
 
+// --- Validation Functions ---
+
+/**
+ * Validates if a string is a valid Base32 secret.
+ * @param {string} secret - The secret to validate.
+ * @returns {{valid: boolean, cleaned: string, error: string|null}} Validation result.
+ */
+function validateSecret(secret) {
+    const clean = secret.toUpperCase().replace(/\s/g, '');
+    
+    // Check for invalid characters
+    const regex = /^[A-Z2-7]+$/;
+    if (!regex.test(clean)) {
+        return { 
+            valid: false, 
+            cleaned: clean,
+            error: "Invalid characters. Only A-Z and 2-7 allowed." 
+        };
+    }
+    
+    // Check minimum length
+    if (clean.length < 16) {
+        return { 
+            valid: false, 
+            cleaned: clean,
+            error: "Secret too short. Minimum 16 characters required." 
+        };
+    }
+    
+    // Check if length is multiple of 8 (proper Base32 padding)
+    if (clean.length % 8 !== 0) {
+        return { 
+            valid: false, 
+            cleaned: clean,
+            error: "Invalid Base32 length. Should be multiple of 8." 
+        };
+    }
+    
+    return { valid: true, cleaned: clean, error: null };
+}
+
+/**
+ * Masks a secret for display (shows only first and last few characters).
+ * @param {string} secret - The secret to mask.
+ * @param {number} visibleStart - Number of characters to show at start.
+ * @param {number} visibleEnd - Number of characters to show at end.
+ * @returns {string} Masked secret.
+ */
+function maskSecret(secret, visibleStart = 4, visibleEnd = 4) {
+    if (secret.length <= visibleStart + visibleEnd) {
+        return secret; // Don't mask short secrets
+    }
+    const start = secret.substring(0, visibleStart);
+    const end = secret.substring(secret.length - visibleEnd);
+    const masked = '*'.repeat(secret.length - visibleStart - visibleEnd);
+    return `${start}${masked}${end}`;
+}
+
+/**
+ * Provides user-friendly error messages.
+ * @param {Error} error - The error object.
+ * @returns {string} User-friendly error message.
+ */
+function getFriendlyErrorMessage(error) {
+    const errorMsg = error.message.toLowerCase();
+    
+    if (errorMsg.includes("base32") || errorMsg.includes("invalid") || errorMsg.includes("secret")) {
+        return "Invalid secret format. Please check your Base32 secret key (only A-Z and 2-7 characters allowed).";
+    }
+    if (errorMsg.includes("crypto") || errorMsg.includes("operation")) {
+        return "Security error occurred while generating code. Please try again.";
+    }
+    if (errorMsg.includes("short")) {
+        return "Secret is too short. Minimum 16 characters required.";
+    }
+    if (errorMsg.includes("length")) {
+        return "Invalid secret length. Base32 secrets should be multiples of 8 characters.";
+    }
+    
+    return "An unexpected error occurred. Please try again with a valid Base32 secret.";
+}
+
+/**
+ * Logs request information for debugging.
+ * @param {object} message - Telegram message object.
+ * @param {boolean} success - Whether the request was successful.
+ * @param {Error|null} error - Error object if any.
+ */
+async function logRequest(message, success = true, error = null) {
+    const logEntry = {
+        timestamp: new Date().toISOString(),
+        userId: message.from?.id || 'unknown',
+        chatId: message.chat.id,
+        command: message.text?.substring(0, 50) || 'no text',
+        success,
+        error: error?.message || null
+    };
+    
+    console.log(JSON.stringify(logEntry));
+}
+
+// --- Inline Keyboard for Refresh Button ---
+
+/**
+ * Creates inline keyboard markup with refresh button.
+ * @param {string} secret - The secret (for callback data).
+ * @returns {object} Inline keyboard markup.
+ */
+function createRefreshKeyboard(secret) {
+    return {
+        inline_keyboard: [
+            [
+                {
+                    text: "🔄 Refresh Code",
+                    callback_data: `refresh:${secret}`
+                }
+            ],
+            [
+                {
+                    text: "📖 Show Full Secret",
+                    callback_data: `show_secret:${secret}`
+                }
+            ]
+        ]
+    };
+}
+
+/**
+ * Creates inline keyboard for showing full secret.
+ * @param {string} secret - The full secret.
+ * @returns {object} Inline keyboard markup.
+ */
+function createSecretKeyboard(secret) {
+    return {
+        inline_keyboard: [
+            [
+                {
+                    text: "🔄 Refresh Code",
+                    callback_data: `refresh:${secret}`
+                }
+            ],
+            [
+                {
+                    text: "🔒 Hide Secret",
+                    callback_data: `hide_secret:${secret}`
+                }
+            ]
+        ]
+    };
+}
+
+// --- Command Handlers ---
+
+/**
+ * Handles bot commands.
+ * @param {string} command - The command string.
+ * @param {number} chatId - Telegram chat ID.
+ * @param {object} message - Telegram message object.
+ * @param {string} token - Bot token.
+ */
+async function handleCommand(command, chatId, message, token) {
+    const parts = command.split(/\s+/);
+    const cmd = parts[0].toLowerCase();
+    
+    if (cmd === '/start' || cmd === '/help') {
+        await sendMessage(
+            chatId,
+            `👋 *Welcome to TOTP Generator Bot!*\n\n` +
+            `*How to use:*\n` +
+            `1. Send me a Base32 secret key\n` +
+            `2. I'll generate a 6-digit TOTP code\n` +
+            `3. Code refreshes every 30 seconds\n` +
+            `4. Use the refresh button to get new code\n\n` +
+            `*Supported Format:*\n` +
+            `• Only uppercase letters A-Z and numbers 2-7\n` +
+            `• Minimum 16 characters\n` +
+            `• Length should be multiple of 8\n\n` +
+            `*Example:* \`JBSWY3DPEHPK3PXP\`\n\n` +
+            `*Available Commands:*\n` +
+            `/help - Show this help message\n` +
+            `/about - About this bot\n` +
+            `/format - Base32 format information`,
+            null, true, token, PARSE_MODE
+        );
+    } else if (cmd === '/about') {
+        await sendMessage(
+            chatId,
+            `*🔐 TOTP Generator Bot*\n\n` +
+            `*Version:* 2.0\n` +
+            `*Algorithm:* TOTP (RFC 6238)\n` +
+            `*Hash:* HMAC-SHA1\n` +
+            `*Code Length:* 6 digits\n` +
+            `*Time Step:* 30 seconds\n\n` +
+            `*Security Features:*\n` +
+            `• Web Crypto API for secure operations\n` +
+            `• Client-side processing only\n` +
+            `• No secret storage\n\n` +
+            `*Developer:* @nkka404\n` +
+            `*Channel:* @premium_channel_404\n\n` +
+            `_Your secrets are never stored or logged._`,
+            null, true, token, PARSE_MODE
+        );
+    } else if (cmd === '/format') {
+        await sendMessage(
+            chatId,
+            `*📝 Base32 Format Information*\n\n` +
+            `*Valid Characters:*\n` +
+            `• Uppercase letters: A-Z\n` +
+            `• Numbers: 2-7 only\n\n` +
+            `*Invalid Characters:*\n` +
+            `• Lowercase letters (convert to uppercase)\n` +
+            `• Numbers 0, 1, 8, 9\n` +
+            `• Special characters\n` +
+            `• Spaces (automatically removed)\n\n` +
+            `*Length Requirements:*\n` +
+            `• Minimum: 16 characters\n` +
+            `• Should be multiple of 8\n` +
+            `• Examples: 16, 24, 32, 40 characters\n\n` +
+            `*Common Examples:*\n` +
+            `• \`JBSWY3DPEHPK3PXP\` (16 chars)\n` +
+            `• \`JBSWY3DPEHPK3PXPJBSWY3D\` (24 chars)\n` +
+            `• \`GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ\` (32 chars)`,
+            null, true, token, PARSE_MODE
+        );
+    } 
+    // Unknown commands will be treated as secrets (no error message)
+}
+
+/**
+ * Handles secret processing and TOTP generation.
+ * @param {string} rawSecret - Raw secret input.
+ * @param {number} chatId - Telegram chat ID.
+ * @param {object} message - Telegram message object.
+ * @param {string} token - Bot token.
+ * @param {boolean} isRefresh - Whether this is a refresh request.
+ * @param {number} messageId - Message ID to edit (for refresh).
+ * @returns {Promise<object|null>} Message info or null.
+ */
+async function handleSecret(rawSecret, chatId, message, token, isRefresh = false, messageId = null) {
+    // Validate secret
+    const validation = validateSecret(rawSecret);
+    if (!validation.valid) {
+        throw new Error(validation.error);
+    }
+    
+    // Generate TOTP
+    const totpCode = await generateTOTP(validation.cleaned);
+    if (!totpCode) {
+        throw new Error("Failed to generate TOTP code. Invalid secret format.");
+    }
+    
+    // Calculate remaining time
+    const epochSeconds = Math.floor(Date.now() / 1000);
+    const secondsRemaining = 30 - (epochSeconds % 30);
+    
+    // Create response
+    const userLink = create_user_link(message);
+    const maskedSecret = maskSecret(validation.cleaned, 4, 4);
+    
+    const response = 
+        `*✅ TOTP Code Generated Successfully*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `*🔢 Code:* \`${totpCode}\`\n` +
+        `*⏱️ Expires in:* \`${secondsRemaining}\` seconds\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `*🔐 Secret:* \`${maskedSecret}\`\n` +
+        `*👤 Generated for:* ${userLink}\n\n` +
+        `_⚠️ Code refreshes automatically every 30 seconds_\n` +
+        `_🔒 Your secret is never stored on our servers_`;
+    
+    // Create keyboard with refresh button
+    const keyboard = createRefreshKeyboard(validation.cleaned);
+    
+    if (isRefresh && messageId) {
+        // Edit existing message
+        try {
+            await fetch(`https://api.telegram.org/bot${token}/editMessageText`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    message_id: messageId,
+                    text: response,
+                    parse_mode: PARSE_MODE,
+                    reply_markup: keyboard
+                })
+            });
+            return null;
+        } catch (error) {
+            console.error("Failed to edit message:", error);
+            // If edit fails, send as new message
+            return await sendMessage(chatId, response, keyboard, true, token, PARSE_MODE);
+        }
+    } else {
+        // Send new message
+        return await sendMessage(chatId, response, keyboard, true, token, PARSE_MODE);
+    }
+}
+
+/**
+ * Handles callback queries (refresh button clicks).
+ * @param {object} callbackQuery - Telegram callback query object.
+ * @param {string} token - Bot token.
+ */
+async function handleCallbackQuery(callbackQuery, token) {
+    const chatId = callbackQuery.message.chat.id;
+    const messageId = callbackQuery.message.message_id;
+    const data = callbackQuery.data;
+    const userId = callbackQuery.from.id;
+    
+    // Answer callback query first (to remove loading state)
+    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            callback_query_id: callbackQuery.id,
+            text: "Refreshing code..."
+        })
+    });
+    
+    try {
+        if (data.startsWith('refresh:')) {
+            const secret = data.substring(8); // Remove 'refresh:' prefix
+            
+            // Generate new TOTP
+            await handleSecret(secret, chatId, callbackQuery.message, token, true, messageId);
+            
+        } else if (data.startsWith('show_secret:')) {
+            const secret = data.substring(12); // Remove 'show_secret:' prefix
+            
+            // Show full secret
+            const totpCode = await generateTOTP(secret);
+            const epochSeconds = Math.floor(Date.now() / 1000);
+            const secondsRemaining = 30 - (epochSeconds % 30);
+            const userLink = `[${callbackQuery.from.first_name || 'User'}](tg://user?id=${userId})`;
+            
+            const response = 
+                `*🔓 Full Secret Display*\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `*🔢 Code:* \`${totpCode}\`\n` +
+                `*⏱️ Expires in:* \`${secondsRemaining}\` seconds\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `*🔐 Full Secret:* \`${secret}\`\n` +
+                `*👤 Generated for:* ${userLink}\n\n` +
+                `_⚠️ Keep this secret secure! Do not share._\n` +
+                `_⚠️ Code refreshes automatically every 30 seconds_`;
+            
+            const keyboard = createSecretKeyboard(secret);
+            
+            await fetch(`https://api.telegram.org/bot${token}/editMessageText`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    message_id: messageId,
+                    text: response,
+                    parse_mode: PARSE_MODE,
+                    reply_markup: keyboard
+                })
+            });
+            
+        } else if (data.startsWith('hide_secret:')) {
+            const secret = data.substring(12); // Remove 'hide_secret:' prefix
+            
+            // Hide secret (go back to masked view)
+            const totpCode = await generateTOTP(secret);
+            const epochSeconds = Math.floor(Date.now() / 1000);
+            const secondsRemaining = 30 - (epochSeconds % 30);
+            const userLink = `[${callbackQuery.from.first_name || 'User'}](tg://user?id=${userId})`;
+            const maskedSecret = maskSecret(secret, 4, 4);
+            
+            const response = 
+                `*✅ TOTP Code Generated Successfully*\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `*🔢 Code:* \`${totpCode}\`\n` +
+                `*⏱️ Expires in:* \`${secondsRemaining}\` seconds\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `*🔐 Secret:* \`${maskedSecret}\`\n` +
+                `*👤 Generated for:* ${userLink}\n\n` +
+                `_⚠️ Code refreshes automatically every 30 seconds_\n` +
+                `_🔒 Your secret is never stored on our servers_`;
+            
+            const keyboard = createRefreshKeyboard(secret);
+            
+            await fetch(`https://api.telegram.org/bot${token}/editMessageText`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    chat_id: chatId,
+                    message_id: messageId,
+                    text: response,
+                    parse_mode: PARSE_MODE,
+                    reply_markup: keyboard
+                })
+            });
+        }
+        
+    } catch (error) {
+        console.error("Callback query error:", error);
+        
+        // Send error message
+        await sendMessage(
+            chatId,
+            `❌ *Error Refreshing Code*\n\n` +
+            `Please send your secret again.\n\n` +
+            `Error: ${error.message.substring(0, 100)}`,
+            null, true, token, PARSE_MODE
+        );
+    }
+}
+
 // --- Main Handler Logic ---
 
 /**
- * Telegram Update Object ကို ခွဲခြမ်းစိတ်ဖြာပြီး TOTP Code ကို ထုတ်လုပ်သည်။
+ * Main handler for Telegram updates.
  */
 export async function handleUpdate(update, env) {
     const token = env[TELEGRAM_BOT_TOKEN_ENV];
-    const lang = LANGUAGE_PACK.default; 
-
+    
     if (!token) {
         console.error("TELEGRAM_BOT_TOKEN_ENV is not set in environment.");
-        return; 
+        return;
     }
-
-    if (update.message && update.message.text) {
-        const message = update.message;
-        const chatId = message.chat.id;
-        const userId = message.from.id;
-        const raw_secret = message.text;
+    
+    // Handle callback queries (refresh button clicks)
+    if (update.callback_query) {
+        await handleCallbackQuery(update.callback_query, token);
+        return;
+    }
+    
+    // Check if update contains a message with text
+    if (!update.message || !update.message.text) {
+        if (update.message) {
+            await sendMessage(
+                update.message.chat.id,
+                `❌ *Unsupported Message Type*\n\n` +
+                `Please send text messages or commands only.\n` +
+                `Type /help for instructions.`,
+                null, true, token, PARSE_MODE
+            );
+        }
+        return;
+    }
+    
+    const message = update.message;
+    const chatId = message.chat.id;
+    const text = message.text.trim();
+    
+    try {
+        // Handle command or secret
+        if (text.startsWith('/')) {
+            await handleCommand(text, chatId, message, token);
+        } else {
+            // Treat as secret (unknown commands are also treated as secrets)
+            await handleSecret(text, chatId, message, token);
+        }
         
-        // Final response ကို ပို့ရန်အတွက် response_text ကို သတ်မှတ်ခြင်း။
-        let final_response_text;
-
-        try {
-            // 1. Command သို့မဟုတ် Secret စစ်ဆေးခြင်း
-            if (raw_secret.startsWith('/')) {
-                const parts = raw_secret.split(/\s+/);
-                const commandBase = parts[0].toLowerCase();
-                
-                if (commandBase === '/start' || commandBase === '/help') {
-                    final_response_text = `👋 Welcome! Send me a Base32 secret key to generate a TOTP code.\n\n*Example:* \`JBSWY3DPEHPK3PXP\`\n\n*Supported Secret:* Base32 only (A-Z, 2-7).`;
-                } else {
-                    final_response_text = `Unknown command: ${commandBase}`;
-                }
-                
-            } else {
-                // Secret Logic (Command မဟုတ်ပါက Base32 secret အဖြစ် ယူဆသည်)
-                const clean_secret = raw_secret?.trim().toUpperCase().replace(/\s/g, '').replace(/[^A-Z2-7]/g, '');
-
-                if (!clean_secret || clean_secret.length < 16) {
-                    final_response_text = get_text('2fa_invalid_secret', lang);
-                } else {
-                    // 2. TOTP Generation (Cryptographic logic ကို await ဖြင့် လုပ်ဆောင်သည်)
-                    const totp_code = await generateTOTP(clean_secret);
-
-                    if (!totp_code) {
-                         // Base32 Decode မအောင်မြင်ခြင်း (သို့) အခြား unexpected error
-                         throw new Error("Base32 decoding failed. Check secret format.");
-                    }
-
-                    // Time Remaining Calculation
-                    const epochSeconds = Math.floor(Date.now() / 1000);
-                    const seconds_remaining = 30 - (epochSeconds % 30);
-                    
-                    const user_link = create_user_link(message);
-
-                    // 3. Successful Response
-                    final_response_text = 
-                        `*🔐 TOTP Code Generated ✅*\n` +
-                        `━━━━━━━━━━━━━━━━━━\n` +
-                        `*Code:* \`${totp_code}\`\n` +
-                        `*Expires in:* \`${seconds_remaining}\` seconds\n` +
-                        `━━━━━━━━━━━━━━━━━━\n` +
-                        `*Secret:* \`${clean_secret.substring(0, 8)}...${clean_secret.slice(-4)}\`\n\n` +
-                        `*Generated By:* ${user_link}`;
-                }
-            }
-
-        } catch (e) {
-            console.error(`TOTP Handler Fatal Error: ${e.message}`);
-            // Error message ကို ဖော်ပြခြင်း
-            const display_error = `*❌ Error: ${e.message.substring(0, 100)}*`;
-            final_response_text = get_text('2fa_error', lang) || display_error;
-        }
-
-        // 4. Final Response ကို တစ်ခါတည်း ပို့ခြင်း
-        if (final_response_text) {
-             await sendMessage(chatId, final_response_text, null, true, token, PARSE_MODE);
-        }
-
-    } else if (update.message) {
-        // စာသား မဟုတ်သော message
-        const chatId = update.message.chat.id;
-        const error_message = get_text('unsupported_update', lang);
-        await sendMessage(chatId, error_message, null, true, token, PARSE_MODE);
+        // Log successful request
+        await logRequest(message, true);
+        
+    } catch (error) {
+        // Log error
+        await logRequest(message, false, error);
+        
+        // Send user-friendly error message
+        const errorMessage = getFriendlyErrorMessage(error);
+        
+        await sendMessage(
+            chatId,
+            `❌ *Error*\n\n${errorMessage}\n\n` +
+            `*Tips:*\n` +
+            `• Use only uppercase A-Z and numbers 2-7\n` +
+            `• Minimum 16 characters\n` +
+            `• Type /format for detailed instructions`,
+            null, true, token, PARSE_MODE
+        );
     }
-}
+        }
