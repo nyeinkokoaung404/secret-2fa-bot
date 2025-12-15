@@ -7,7 +7,7 @@
 import {
     get_text,
     sendMessage,
-    editMessageText,
+    editMessageText, // ဤ function ကို အသုံးပြုတော့မည်မဟုတ်သော်လည်း import လုပ်ထားသည်။
 } from './utils.js';
 
 import { 
@@ -49,23 +49,19 @@ function base32Decode(secret) {
 
 /**
  * Generates TOTP code using HMAC-SHA1 and Dynamic Truncation (RFC 6238).
- * * ⚠️ ဤနေရာ၌ try...catch ကို ထည့်သွင်းခြင်းဖြင့် crypto.subtle errors များကို ဖမ်းယူသည်။
- * * @param {string} secret - Base32 secret string.
+ * @param {string} secret - Base32 secret string.
  * @returns {Promise<string | null>} 6-digit TOTP code or null on error.
  */
 async function generateTOTP(secret) {
     const keyBuffer = base32Decode(secret);
     if (!keyBuffer) return null;
     
-    // TOTP time step (30 seconds)
     const epochSeconds = Math.floor(Date.now() / 1000);
     const timeStep = Math.floor(epochSeconds / 30);
     
-    // 8-byte message buffer (time counter)
     const msgBuffer = new ArrayBuffer(8);
     const dataView = new DataView(msgBuffer);
     
-    // Time step ကို 8-byte big-endian အဖြစ် ထည့်သွင်းသည်။
     dataView.setUint32(0, 0, false); 
     dataView.setUint32(4, timeStep, false); 
 
@@ -94,9 +90,8 @@ async function generateTOTP(secret) {
         const code = binary % 1000000;
         return String(code).padStart(6, "0");
     } catch (e) {
-        // Cryptographic errors (e.g., "Key is too short") ကို ဤနေရာမှ ဖမ်းယူသည်။
+        // Cryptographic errors (e.g., "Key is too short") ကို ဖမ်းယူပြီး ပြန်လည် ထုတ်ပစ်သည်။
         console.error("Crypto Subtle Error:", e.message);
-        // Error message ကို main handler သို့ ပို့နိုင်ရန် ဤနေရာတွင် throw ပြန်လုပ်မည်။
         throw new Error(`Crypto operation failed: ${e.message}`);
     }
 }
@@ -122,7 +117,7 @@ function create_user_link(message) {
  */
 export async function handleUpdate(update, env) {
     const token = env[TELEGRAM_BOT_TOKEN_ENV];
-    const lang = LANGUAGE_PACK.default; // hardcode
+    const lang = LANGUAGE_PACK.default; 
 
     if (!token) {
         console.error("TELEGRAM_BOT_TOKEN_ENV is not set in environment.");
@@ -134,72 +129,65 @@ export async function handleUpdate(update, env) {
         const chatId = message.chat.id;
         const userId = message.from.id;
         const raw_secret = message.text;
-
-        // 1. Command သို့မဟုတ် Secret စစ်ဆေးခြင်း
-        if (raw_secret.startsWith('/')) {
-            const parts = raw_secret.split(/\s+/);
-            const commandBase = parts[0].toLowerCase();
-            
-            if (commandBase === '/start' || commandBase === '/help') {
-                const welcome_message = `👋 Welcome! Send me a Base32 secret key to generate a TOTP code.\n\n*Example:* \`JBSWY3DPEHPK3PXP\`\n\n*Supported Secret:* Base32 only (A-Z, 2-7).`;
-                await sendMessage(chatId, welcome_message, null, true, token, PARSE_MODE);
-            } else {
-                const unknown_command_message = `Unknown command: ${commandBase}`;
-                await sendMessage(chatId, unknown_command_message, null, true, token, PARSE_MODE);
-            }
-            return;
-        }
-
-        // Secret Logic (Command မဟုတ်ပါက Base32 secret အဖြစ် ယူဆသည်)
-        const clean_secret = raw_secret?.trim().toUpperCase().replace(/\s/g, '').replace(/[^A-Z2-7]/g, '');
-
-        if (!clean_secret || clean_secret.length < 16) {
-            const error_message = get_text('2fa_invalid_secret', lang);
-            await sendMessage(chatId, error_message, null, true, token, PARSE_MODE);
-            return;
-        }
-
-        // 2. Loading Message ကို ချက်ချင်းပို့သည်
-        const loading_message_text = get_text('loading_message', lang) || "*Generating TOTP code...*";
-        const loading_message_response = await sendMessage(chatId, loading_message_text, null, true, token, PARSE_MODE);
-        const loading_message_id = loading_message_response?.data?.result?.message_id;
+        
+        // Final response ကို ပို့ရန်အတွက် response_text ကို သတ်မှတ်ခြင်း။
+        let final_response_text;
 
         try {
-            // 3. TOTP Generation
-            const totp_code = await generateTOTP(clean_secret);
+            // 1. Command သို့မဟုတ် Secret စစ်ဆေးခြင်း
+            if (raw_secret.startsWith('/')) {
+                const parts = raw_secret.split(/\s+/);
+                const commandBase = parts[0].toLowerCase();
+                
+                if (commandBase === '/start' || commandBase === '/help') {
+                    final_response_text = `👋 Welcome! Send me a Base32 secret key to generate a TOTP code.\n\n*Example:* \`JBSWY3DPEHPK3PXP\`\n\n*Supported Secret:* Base32 only (A-Z, 2-7).`;
+                } else {
+                    final_response_text = `Unknown command: ${commandBase}`;
+                }
+                
+            } else {
+                // Secret Logic (Command မဟုတ်ပါက Base32 secret အဖြစ် ယူဆသည်)
+                const clean_secret = raw_secret?.trim().toUpperCase().replace(/\s/g, '').replace(/[^A-Z2-7]/g, '');
 
-            if (!totp_code) {
-                 // generateTOTP သည် Base32 Decode မအောင်မြင်ပါက null ပြန်လာနိုင်သည်။
-                 throw new Error("Base32 decoding failed. Check secret format.");
+                if (!clean_secret || clean_secret.length < 16) {
+                    final_response_text = get_text('2fa_invalid_secret', lang);
+                } else {
+                    // 2. TOTP Generation (Cryptographic logic ကို await ဖြင့် လုပ်ဆောင်သည်)
+                    const totp_code = await generateTOTP(clean_secret);
+
+                    if (!totp_code) {
+                         // Base32 Decode မအောင်မြင်ခြင်း (သို့) အခြား unexpected error
+                         throw new Error("Base32 decoding failed. Check secret format.");
+                    }
+
+                    // Time Remaining Calculation
+                    const epochSeconds = Math.floor(Date.now() / 1000);
+                    const seconds_remaining = 30 - (epochSeconds % 30);
+                    
+                    const user_link = create_user_link(message);
+
+                    // 3. Successful Response
+                    final_response_text = 
+                        `**🔐 TOTP Code Generated ✅**\n` +
+                        `━━━━━━━━━━━━━━━━━━\n` +
+                        `*Code:* \`${totp_code}\`\n` +
+                        `*Expires in:* \`${seconds_remaining}\` seconds\n` +
+                        `━━━━━━━━━━━━━━━━━━\n` +
+                        `*Secret:* \`${clean_secret.substring(0, 8)}...${clean_secret.slice(-4)}\`\n\n` +
+                        `*Generated By:* ${user_link}`;
+                }
             }
-
-            // Time Remaining Calculation
-            const epochSeconds = Math.floor(Date.now() / 1000);
-            const seconds_remaining = 30 - (epochSeconds % 30);
-            
-            const user_link = create_user_link(message);
-
-            // 4. Successful Response
-            const response_text = 
-                `**🔐 TOTP Code Generated ✅**\n` +
-                `━━━━━━━━━━━━━━━━━━\n` +
-                `*Code:* \`${totp_code}\`\n` +
-                `*Expires in:* \`${seconds_remaining}\` seconds\n` +
-                `━━━━━━━━━━━━━━━━━━\n` +
-                `*Secret:* \`${clean_secret.substring(0, 8)}...${clean_secret.slice(-4)}\`\n\n` +
-                `*Generated By:* ${user_link}`;
-
-            // 5. Loading message ကို Result ဖြင့် ပြန်လည်ပြင်ဆင်သည်
-            await editMessageText(chatId, loading_message_id, response_text, null, true, token, PARSE_MODE);
 
         } catch (e) {
             console.error(`TOTP Handler Fatal Error: ${e.message}`);
-            
-            // Error message ကို Loading message နေရာတွင် ပြန်လည်ပြင်ဆင်သည်။
+            // Error message ကို ဖော်ပြခြင်း
             const display_error = `*❌ Error: ${e.message.substring(0, 100)}*`;
-            const error_message = get_text('2fa_error', lang) || display_error;
-            
-            await editMessageText(chatId, loading_message_id, error_message, null, true, token, PARSE_MODE);
+            final_response_text = get_text('2fa_error', lang) || display_error;
+        }
+
+        // 4. Final Response ကို တစ်ခါတည်း ပို့ခြင်း
+        if (final_response_text) {
+             await sendMessage(chatId, final_response_text, null, true, token, PARSE_MODE);
         }
 
     } else if (update.message) {
