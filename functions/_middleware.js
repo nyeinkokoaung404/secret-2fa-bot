@@ -9,7 +9,6 @@ import { handleUpdate } from './handlers';
 /**
  * Cloudflare Worker entry point.
  * This function intercepts all requests and delegates Telegram updates to the handler.
- * @param {Object} context The request context, including request, env, and waitUntil.
  */
 export async function onRequest({ request, env, waitUntil }) {
     if (request.method !== 'POST') {
@@ -19,14 +18,18 @@ export async function onRequest({ request, env, waitUntil }) {
     try {
         const update = await request.json();
         
-        // waitUntil ကို အသုံးပြု၍ processing ကို background တွင် လုပ်ဆောင်သည်။
-        waitUntil(handleUpdate(update, env));
-
+        // ⚠️ အရေးကြီးသည်- handleUpdate ကို await ဖြင့် ခေါ်ယူခြင်းဖြင့်
+        // TOTP မျိုးဆက်အတွက် လိုအပ်သော cryptographic လုပ်ဆောင်ချက်များကို
+        // Worker ၏ execution context တွင် ပြီးစီးရန် အာမခံပါသည်။
+        await handleUpdate(update, env); 
+        
+        // Telegram API မှ OK ပြန်ရရန် ချက်ချင်း response ပြန်ပေးသည်။
         return new Response('OK', { status: 200 });
+        
     } catch (e) {
-        console.error('Worker Error:', e);
+        console.error('Worker Error in middleware:', e);
         // Error ရှိသော်လည်း Telegram retries ကို ရှောင်ရန် OK ပြန်ပေးသည်။
-        return new Response('Error processing update', { status: 200 });
+        return new Response('Error processing request body', { status: 200 });
     }
 }
 // NOTE: We only export the onRequest hook, as per Cloudflare's /functions directory pattern.
