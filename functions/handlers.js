@@ -98,7 +98,7 @@ export async function handleUpdate(update, env) {
         
         // /start command
         if (text === '/start') {
-            await sendMessage(chatId, `👋![🤖](tg://emoji?id=5440660757194744323) *Welcome to OTP Generator Bot!*\n` +
+            await sendMessage(chatId, `👋 *Welcome To OTP Generator Bot!*\n` +
             `━━━━━━━━━━━━━━━━━━━━\n` +
             `*How to use:*\n` +
             `1. Send me a your secret key\n` +
@@ -111,7 +111,7 @@ export async function handleUpdate(update, env) {
             `• Length should be multiple of 8\n` +
             `*Example:* \`JBSWY3DPEHPK3PXP\`\n` +
             `━━━━━━━━━━━━━━━━━━━━\n` +
-            `Developed By @nkka404 🇲🇲`, null, true, token, PARSE_MODE);
+            `🧑‍💻 Developed By: @nkka404 🇲🇲`, null, true, token, PARSE_MODE);
             return;
         }
         
