@@ -3,8 +3,6 @@
 // Channel: https://t.me/premium_channel_404
 ///////////////////////////////////////////////
 
-// Simple TOTP Bot - Only OTP Code + Refresh Button
-
 import { sendMessage } from './utils.js';
 import { TELEGRAM_BOT_TOKEN_ENV, PARSE_MODE } from './config.js';
 
