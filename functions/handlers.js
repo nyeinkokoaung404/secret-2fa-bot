@@ -59,7 +59,7 @@ async function generateTOTP(secret) {
 // Create Refresh Button Only
 function createRefreshKeyboard(secret) {
     return {
-        inline_keyboard: [[{ text: "![🤖](tg://emoji?id=5440660757194744323) Refresh Code", callback_data: `refresh:${secret}` }]]
+        inline_keyboard: [[{ text: "🔄 Refresh Code", callback_data: `refresh:${secret}` }]]
     };
 }
 
@@ -98,7 +98,7 @@ export async function handleUpdate(update, env) {
         
         // /start command
         if (text === '/start') {
-            await sendMessage(chatId, `👋 *Welcome to OTP Generator Bot!*\n` +
+            await sendMessage(chatId, `👋![🤖](tg://emoji?id=5440660757194744323) *Welcome to OTP Generator Bot!*\n` +
             `━━━━━━━━━━━━━━━━━━━━\n` +
             `*How to use:*\n` +
             `1. Send me a your secret key\n` +
