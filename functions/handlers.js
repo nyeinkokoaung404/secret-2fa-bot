@@ -59,7 +59,7 @@ async function generateTOTP(secret) {
 // Create Refresh Button Only
 function createRefreshKeyboard(secret) {
     return {
-        inline_keyboard: [[{ text: "🔄 Refresh Code", callback_data: `refresh:${secret}` }]]
+        inline_keyboard: [[{ text: "🔄 Refresh Code", icon_custom_emoji_id: "5440660757194744323", callback_data: `refresh:${secret}` }]]
     };
 }
 
