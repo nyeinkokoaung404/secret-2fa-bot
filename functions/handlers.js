@@ -122,7 +122,7 @@ export async function handleUpdate(update, env) {
             const keyboard = createRefreshKeyboard(text);
             await sendMessage(chatId, response, keyboard, true, token, PARSE_MODE);
         } else {
-            await sendMessage(chatId, "❌ Invalid secret code. Use A-Z and 2-7 only.", null, true, token, PARSE_MODE);
+            await sendMessage(chatId, "❌ *Invalid secret code. Use A-Z and 2-7 only.*", null, true, token, PARSE_MODE);
         }
     }
 }
