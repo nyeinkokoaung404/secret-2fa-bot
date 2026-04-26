@@ -85,7 +85,7 @@ export async function handleUpdate(update, env) {
         });
         
         const code = await generateTOTP(secret);
-        const response = `*Your OTP code is:* \`${code}\``;
+        const response = `*Your OTP Code* 👉 \`${code}\``;
         const keyboard = createRefreshKeyboard(secret);
         
         await fetch(`https://api.telegram.org/bot${token}/editMessageText`, {
@@ -128,7 +128,7 @@ export async function handleUpdate(update, env) {
         // Generate OTP from secret
         const code = await generateTOTP(text);
         if (code) {
-            const response = `Your OTP code is: ${code}`;
+            const response = `*Your OTP Code* 👉 \`${code}\``;
             const keyboard = createRefreshKeyboard(text);
             await sendMessage(chatId, response, keyboard, true, token, PARSE_MODE);
         } else {
