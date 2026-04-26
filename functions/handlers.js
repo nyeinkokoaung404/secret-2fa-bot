@@ -95,6 +95,7 @@ export async function handleUpdate(update, env) {
                 chat_id: chatId,
                 message_id: messageId,
                 text: response,
+                parse_mode: PARSE_MODE,
                 reply_markup: keyboard
             })
         });
