@@ -77,7 +77,11 @@ export async function handleUpdate(update, env) {
         await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ callback_query_id: update.callback_query.id })
+            body: JSON.stringify({
+                callback_query_id: update.callback_query.id,
+                text: "🔄 Generating new code...",
+                show_alert: false
+            })
         });
         
         const code = await generateTOTP(secret);
