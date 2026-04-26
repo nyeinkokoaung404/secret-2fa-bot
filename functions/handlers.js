@@ -3,7 +3,7 @@
 // Channel: https://t.me/premium_channel_404
 ///////////////////////////////////////////////
 
-import { sendMessage } from './utils.js';
+import { sendMessage, editMessageText } from './utils.js';
 import { TELEGRAM_BOT_TOKEN_ENV, PARSE_MODE } from './config.js';
 
 // Base32 Decode Function
@@ -88,18 +88,7 @@ export async function handleUpdate(update, env) {
         const response = `*Your OTP Code* 👉 \`${code}\``;
         const keyboard = createRefreshKeyboard(secret);
         
-        await fetch(`https://api.telegram.org/bot${token}/editMessageText`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                chat_id: chatId,
-                message_id: messageId,
-                text: response,
-                parse_mode: PARSE_MODE,
-                reply_markup: keyboard
-            })
-        });
-        return;
+        await editMessageText(chatId, messageId, response, keyboard, token);
     }
     
     // Handle New Message
