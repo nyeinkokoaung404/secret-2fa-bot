@@ -5,11 +5,6 @@
 
 import { handleUpdate } from './handlers';
 
-/**
- * Cloudflare Worker entry point.
- * This function intercepts all requests and delegates Telegram updates to the handler.
- * @param {Object} context The request context, including request, env, and waitUntil.
- */
 export async function onRequest({ request, env, waitUntil }) {
     if (request.method !== 'POST') {
         return new Response('Secret 2fa Bot is running. Send updates via POST.', { status: 200 });
